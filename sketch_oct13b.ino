@@ -16,7 +16,6 @@
   along with esp-find3-client.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-//#include <WiFiClient.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
 
@@ -25,8 +24,8 @@ const char* password = "duoduo2011";
 const char* host = "192.168.31.131";
 
 // Uncomment to set to learn mode
-// #define MODE_LEARNING 1
-#define LOCATION "living room"
+//#define MODE_LEARNING 1
+#define LOCATION "Kitchen"
 #define GROUP_NAME "home"
 
 // Important! BLE + WiFi Support does not fit in standard partition table.
@@ -37,7 +36,7 @@ const char* host = "192.168.31.131";
 #include <BLEUtils.h>
 #include <BLEScan.h>
 
-#define BLE_SCANTIME 5
+#define BLE_SCANTIME 6
 BLEScan* pBLEScan;
 
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
@@ -82,47 +81,54 @@ void setup() {
   pBLEScan = BLEDevice::getScan(); // create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setActiveScan(true); // active scan uses more power, but get results faster
-  pBLEScan->setInterval(100);
-  pBLEScan->setWindow(99);  // less or equal setInterval value
+  pBLEScan->setInterval(5000); //2000 mseconds
+  pBLEScan->setWindow(4000);  // less or equal setInterval value
 }
 
 
 void SubmitWiFi(void)
 {
+  Serial.println("[ INFO ]\tBLE scan starting..");
+  bool is_found = false;
   String request;
 
-  DynamicJsonDocument jdoc(512);
 
+  BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
+  Serial.print("[ INFO ]\t");
+  Serial.print(foundDevices.getCount());
+  Serial.println(" BLE devices found.");
+
+  if (foundDevices.getCount() <= 0 ) 
+    return;
+
+  DynamicJsonDocument jdoc(1024);
   JsonObject root = jdoc.to<JsonObject>();
   root["d"] = chipIdStr;
   root["f"] = GROUP_NAME;
+  #ifdef MODE_LEARNING
+  root["l"] = LOCATION;
+  #endif 
   JsonObject data = root.createNestedObject("s");
-  serializeJsonPretty(jdoc, Serial);
 
-    Serial.println("[ INFO ]\tBLE scan starting..");
-    
-    BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
-    Serial.print("[ INFO ]\t");
-    Serial.print(foundDevices.getCount());
-    Serial.println(" BLE devices found.");
-
-    JsonObject bt_network = data.createNestedObject("bluetooth");
-    for(int i=0; i<foundDevices.getCount(); i++)
-    {
-      BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
-      //std::string mac = foundDevices.getDevice(i).getAddress().toString();
-      if (aDevice.haveName()) {
-        Serial.print(aDevice.getName().c_str());
-        bt_network[(String)aDevice.getName().c_str()] = (int)foundDevices.getDevice(i).getRSSI();
-      }
-      
+  JsonObject bt_network = data.createNestedObject("bluetooth");
+  for(int i=0; i<foundDevices.getCount(); i++)
+  {
+    BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
+    //std::string mac = foundDevices.getDevice(i).getAddress().toString();
+    if (aDevice.haveName()) {
+      Serial.print(aDevice.getName().c_str());
+      bt_network[(String)aDevice.getName().c_str()] = (int)foundDevices.getDevice(i).getRSSI();
+      is_found = true;
     }
-    pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
-
-    #ifdef MODE_LEARNING
-      root["l"] = LOCATION;
-    #endif
+    else {
+      std::string mac = aDevice.getAddress().toString();
+      bt_network[(String)mac.c_str()] = (int)foundDevices.getDevice(i).getRSSI();
+      is_found = true;
+    }
     
+  }
+  pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
+  if (is_found) {
     serializeJson(jdoc, request);
     serializeJsonPretty(jdoc, Serial);
 
@@ -145,11 +151,11 @@ void SubmitWiFi(void)
 
     // This will send the request to the server
     client.print(String("POST ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + host + "\r\n" +
-                 "Content-Type: application/json\r\n" +
-                 "Content-Length: " + request.length() + "\r\n\r\n" +
-                 request +
-                 "\r\n\r\n"
+                "Host: " + host + "\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Content-Length: " + request.length() + "\r\n\r\n" +
+                request +
+                "\r\n\r\n"
                 );
 
     unsigned long timeout = millis();
@@ -174,18 +180,19 @@ void SubmitWiFi(void)
       Serial.println(F("[ INFO ]\tGot a 200 OK."));
     }
 
-   char endOfHeaders[] = "\r\n\r\n";
-   if (!client.find(endOfHeaders)) {
-    Serial.println(F("[ ERROR ]\t Invalid Response"));
-    return;
-   }
-   else
-   {
-    Serial.println("[ INFO ]\tLooks like a valid response.");
-   }
+    char endOfHeaders[] = "\r\n\r\n";
+    if (!client.find(endOfHeaders)) {
+      Serial.println(F("[ ERROR ]\t Invalid Response"));
+      return;
+    }
+    else
+    {
+      Serial.println("[ INFO ]\tLooks like a valid response.");
+    }
 
-   Serial.println("[ INFO ]\tClosing connection.");
-   Serial.println("=============================================================");
+    Serial.println("[ INFO ]\tClosing connection.");
+    Serial.println("=============================================================");
+  }
 
    #ifdef USE_DEEPSLEEP
    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
@@ -196,5 +203,5 @@ void SubmitWiFi(void)
 
 void loop() {
   SubmitWiFi();
-  delay(20000);
+  delay(6000); //Delay 5 seconds
 }
