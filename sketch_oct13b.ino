@@ -173,7 +173,7 @@ void setup() {
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan(); // create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setActiveScan(true); // active scan uses more power, but get results faster
+  pBLEScan->setActiveScan(false); // active scan uses more power, but get results faster
   pBLEScan->setInterval(5000); //2000 mseconds
   pBLEScan->setWindow(4000);  // less or equal setInterval value
 }
@@ -213,6 +213,8 @@ void SubmitWiFi(void)
       
       if (aBeacon.getManufacturerId() == 0x004c) {
         Serial.println("Advertised Beacon ManuId: " + String(aBeacon.getManufacturerId()));
+        aBeacon.setMajor(aBeacon.getMajor());
+        aBeacon.setMinor(aBeacon.getMinor());
         String name = String(aBeacon.getMajor())+"-"+String(aBeacon.getMinor());
         bt_network[name] = (int)aDevice.getRSSI();
         is_found = true;
