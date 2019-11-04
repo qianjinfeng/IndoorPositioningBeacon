@@ -46,12 +46,29 @@ Asset management through indoor positioning via bluetooth.
 
 ## Locator
 
-ESP32 WROOM development board (brough from taobao)
+ESP32 development board (brough from taobao)
 ### installation
  - arduino IDE 
  - arduino-esp32 ([https://github.com/espressif/arduino-esp32](https://github.com/espressif/arduino-esp32))
+   * choose Tools -> Board: ESP32 Wrover Module  
+   * to fix flash too big issue    
+        * in arduino-1.xx/hardware/espressif/esp32/board.txt, change for esp32wrover.name=ESP32 Wrover Module  
+        ```
+            -esp32wrover.upload.maximum_size=1310720
+            +esp32wrover.upload.maximum_size=1966080
+        ```
+        * in arduino-1.xx/hardware/espressif/esp32/tools/partitions/default.csv, change  
+        ```
+            -app0,     app,  ota_0,   0x10000, 0x140000,
+            -app1,     app,  ota_1,   0x150000,0x140000,
+            -spiffs,   data, spiffs,  0x290000,0x170000,
+            +app0,     app,  ota_0,   0x10000, 0x1E0000,
+            +app1,     app,  ota_1,   0x1F0000,0x1E0000,
+            +eeprom,   data, 0x99,    0x3F0000,0x1000,
+            +spiffs,   data, spiffs,  0x3F1000,0xF000,
+        ```
  - arduino project file [sketch](/sketch_oct13b.ino)
- (size issue, choose  WROOM board )
+ (flash too big issue, choose ESP32 Wrover Module )
  
 ### usage
  - Active scan: gather fingerprints for the specific location after adaptation code and burning into ESP32  
