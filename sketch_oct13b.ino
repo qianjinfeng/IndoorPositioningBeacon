@@ -19,6 +19,8 @@
 //#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <WiFiMulti.h>
+WiFiMulti wifiMulti;
 
 const char* ssid     = "Xiaomi_duoduo";
 const char* password = "duoduo2011";
@@ -148,6 +150,26 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 String chipIdStr;
 
+// Not sure if WiFiClientSecure checks the validity date of the certificate. 
+// Setting clock just to be sure...
+void setClock() {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  Serial.print(F("Waiting for NTP time sync: "));
+  time_t nowSecs = time(nullptr);
+  while (nowSecs < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(F("."));
+    yield();
+    nowSecs = time(nullptr);
+  }
+
+  Serial.println();
+  struct tm timeinfo;
+  gmtime_r(&nowSecs, &timeinfo);
+  Serial.print(F("Current time: "));
+  Serial.print(asctime(&timeinfo));
+}
 
 void setup() {
   Serial.begin(115200);
@@ -161,11 +183,11 @@ void setup() {
 
   WiFi.begin(ssid, password);
   Serial.println("[ INFO ]\tConnecting to WiFi..");
-
   while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
   }
+
     Serial.println("[ INFO ]\tWiFi connection established.");
     Serial.print("[ INFO ]\tIP address: ");
     Serial.println(WiFi.localIP());
@@ -181,18 +203,7 @@ void setup() {
 
 void SubmitWiFi(void)
 {
-  Serial.println("[ INFO ]\tBLE scan starting..");
-  bool is_found = false;
   String request;
-
-
-  BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
-  Serial.print("[ INFO ]\t");
-  Serial.print(foundDevices.getCount());
-  Serial.println(" BLE devices found.");
-
-  if (foundDevices.getCount() <= 0 ) 
-    return;
 
   DynamicJsonDocument jdoc(1024);
   JsonObject root = jdoc.to<JsonObject>();
@@ -203,35 +214,53 @@ void SubmitWiFi(void)
   #endif 
   JsonObject data = root.createNestedObject("s");
 
-  JsonObject bt_network = data.createNestedObject("bluetooth");
-  BLEBeacon aBeacon = BLEBeacon();
-  for(int i=0; i<foundDevices.getCount(); i++)
-  {
-    BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
-    if (aDevice.haveManufacturerData()) {
-      aBeacon.setData(aDevice.getManufacturerData());
-      
-      if (aBeacon.getManufacturerId() == 0x004c) {
-        Serial.println("Advertised Beacon ManuId: " + String(aBeacon.getManufacturerId()));
-        aBeacon.setMajor(aBeacon.getMajor());
-        aBeacon.setMinor(aBeacon.getMinor());
-        String name = String(aBeacon.getMajor())+"-"+String(aBeacon.getMinor());
-        bt_network[name] = (int)aDevice.getRSSI();
-        is_found = true;
+  //Wifi Scan 
+  Serial.println("[ INFO ]\tWiFi scan starting..");
+  int n = WiFi.scanNetworks(false, true);
+  if (n == 0) {
+    Serial.println("[ ERROR ]\tNo networks found");
+  } else {
+    Serial.print("[ INFO ]\t");
+    Serial.print(n);
+    Serial.println(" WiFi networks found.");
+    JsonObject wifi_network = data.createNestedObject("wifi");
+    for (int i = 0; i < n; ++i) {
+      wifi_network[WiFi.BSSIDstr(i)] = WiFi.RSSI(i);
+    }
+  }
+
+  //Bluetooth scan
+  Serial.println("[ INFO ]\tBLE scan starting..");
+  BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
+  n = foundDevices.getCount();
+  if (n == 0) {
+    Serial.println("[ ERROR ]\tNo BLE devices found");
+  }
+  else {
+    Serial.print("[ INFO ]\t");
+    Serial.print(n);
+    Serial.println(" BLE devices found.");
+    JsonObject bt_network = data.createNestedObject("bluetooth");
+    BLEBeacon aBeacon = BLEBeacon();
+    for(int i=0; i<n; i++)
+    {
+      BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
+      if (aDevice.haveManufacturerData()) {
+        aBeacon.setData(aDevice.getManufacturerData());
+        
+        if (aBeacon.getManufacturerId() == 0x004c) {
+          aBeacon.setMajor(aBeacon.getMajor());
+          aBeacon.setMinor(aBeacon.getMinor());
+          String name = String(aBeacon.getMajor())+"-"+String(aBeacon.getMinor());
+          bt_network[name] = (int)aDevice.getRSSI();
+        }
       }
     }
-    else {
-    }
-    
   }
   pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
-  if (is_found) {
+
     serializeJson(jdoc, request);
     serializeJsonPretty(jdoc, Serial);
-
-    #ifdef DEBUG
-    Serial.println(request);
-    #endif
         
     WiFiClientSecure client;
     //client.setCACert(test_root_ca);
@@ -294,7 +323,7 @@ void SubmitWiFi(void)
     client.stop();
     Serial.println("[ INFO ]\tClosing connection.");
     Serial.println("=============================================================");
-  }
+
 
    #ifdef USE_DEEPSLEEP
    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
