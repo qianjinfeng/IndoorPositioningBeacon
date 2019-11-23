@@ -18,9 +18,9 @@ Asset management through indoor positioning via bluetooth.
 
  - Get a list of all devices  
    ` python3 -m pip install httpie  `  
-   ` HTTP GET https://thefindserver/api/v1/devices/FAMILY `
+   ` http GET https://thefindserver/api/v1/devices/FAMILY `
  - Get the last known location for a device  
-   ` HTTP GET https://thefindserver/api/v1/location/FAMILY/DEVICE `
+   ` http GET https://thefindserver/api/v1/location/FAMILY/DEVICE `
 
 
 ### HTTPS using caddy

@@ -1,0 +1,48 @@
+       L           L     apple 
+0000   02 01 1a    0b ff 4c 00 09 06 03 05 c0 a8 1f e3      ....ÿL.....À¨.ã
+//URL
+       L           L       google     L  service id  google
+0000   02 01 06    03 03   aa fe      11 16 aa fe 10 00 01 6e 6f   .....ªþ..ªþ...no
+0010   72 64 69 63 73 65 6d 69 00                        rdicsemi.
+//TLM
+0000   02 01 06     03 03   aa fe     11 16 aa fe 20 00 0d d4 12   .....ªþ..ªþ ..Ô.
+0010   00 00 00 00 0a 00 00 08 9b                        .........
+
+serviceUUID: 0000feaa-0000-1000-8000-00805f9b34fb, serviceDataUUID: 0000feaa-0000-1000-8000-00805f9b34fb,
+
+manufacture specifi  0xff
+apple 0x004c
+16-bit service class UUID  0x03
+goole 0xffae
+service data  0x16
+
+
+0x01 = Flags
+
+0x03 = Complete List of 16-bit Service Class UUIDs
+
+0x09 = Complete Local Name
+
+0x08 = Shortened Local Name
+
+0x0A = Tx Power Level
+
+0xFF = Manufacturer-specific data
+
+
+/* TLM advertising data: */
+uint8_t advdata_tlm[] =
+{
+  0x03,  // Length
+  0x03,  // Param: Service List
+  0xAA, 0xFE,  // Eddystone ID
+  0x11,  // Length
+  0x16,  // Service Data
+  0xAA, 0xFE, // Eddystone ID
+  0x20,  // TLM flag                   //0x10 URL   0x00 UUID
+  0x00, // TLM version
+  /* [10] */ 0x00, 0x00,  // Battery voltage
+  /* [12] */ 0x80, 0x00,  // Beacon temperature
+  /* [14] */ 0x00, 0x00, 0x00, 0x00, // Advertising PDU count
+  /* [18] */ 0x00, 0x00, 0x00, 0x00 // Time since reboot
+};

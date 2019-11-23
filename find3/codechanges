@@ -1,0 +1,120 @@
+
+/home/qian/workplace/find3-master/server/main/src/models/beaconData.go
+package models
+
+type BeaconData struct {
+	// Family is a group of devices
+	Family   string                 `json:"f"`
+	Payloads map[string]interface{} `json:"b"`
+}
+
+
+
+/home/qian/workplace/find3-master/server/main/src/server/server.go
+	r.POST("/beacon", handlerBeaconData)
+
+
+func handlerBeaconData(c *gin.Context) {
+	message, err := func(c *gin.Context) (message string, err error) {
+		var b models.BeaconData
+		err = c.BindJSON(&b)
+		if err != nil {
+			message = b.Family
+			err = errors.Wrap(err, "problem binding beacon data")
+			return
+		}
+		// process data
+		err = api.SaveBeaconData(b)
+		if err != nil {
+			message = b.Family
+			return
+		}
+		message = "inserted beacon data"
+
+		logger.Log.Debugf(" /data %+v", b)
+		return
+	}(c)
+	if err != nil {
+		logger.Log.Debugf("[%s] problem parsing beacon data: %s", message, err.Error())
+		c.JSON(http.StatusOK, gin.H{"message": err.Error(), "success": false})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"message": message, "success": true})
+	}
+}
+
+/home/qian/workplace/find3-master/server/main/src/api/models.go
+import (
+	"github.com/schollz/find3/server/main/src/database"
+	"github.com/schollz/find3/server/main/src/models"
+)
+
+// SaveBeaconData will add Beacon data to the database
+func SaveBeaconData(b models.BeaconData) (err error) {
+	db, err := database.Open(b.Family)
+	if err != nil {
+		return
+	}
+	err = db.AddBeacon(b)
+	db.Close()
+	if err != nil {
+		return
+	}
+	return
+}
+
+/home/qian/workplace/find3-master/server/main/src/database/db.go
+//func (d *Database) MakeTables() (err error) {
+	sqlStmt = `create table beacons (id INTEGER PRIMARY KEY, mac TEXT, val TEXT);`
+	_, err = d.db.Exec(sqlStmt)
+	if err != nil {
+		err = errors.Wrap(err, "MakeTables")
+		logger.Log.Error(err)
+		return
+	}
+
+
+// AddBeacon will insert a beacon data into the database
+func (d *Database) AddBeacon(b models.BeaconData) (err error) {
+	startTime := time.Now()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return errors.Wrap(err, "AddBeacon")
+	}
+
+	sqlStatement := "insert or replace into beacons (mac, val) values (?, ?)"
+	stmt, err := tx.Prepare(sqlStatement)
+	if err != nil {
+		return errors.Wrap(err, "AddBeacon, prepare "+sqlStatement)
+	}
+	defer stmt.Close()
+
+	for k, v := range b.Payloads {
+		_, err = stmt.Exec(k, v)
+		if err != nil {
+			return errors.Wrap(err, "AddBeacon")
+		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return errors.Wrap(err, "AddBeacon")
+	}
+
+	logger.Log.Debugf("[%s] inserted beacon data, %s", b.Family, time.Since(startTime))
+	return
+}
+
+
+
+http POST http://localhost:8003/beacon < beacon.json 
+qian@qian-Satellite-Radius-P55W-B:~/workplace/find3-master/server/main$ cat beacon.json 
+
+{
+    "f": "test",
+    "b": {
+        "aa:bb:cc:dd": "batter",
+	"bb:cc:dd:ee": "namespace"
+    }
+}
+

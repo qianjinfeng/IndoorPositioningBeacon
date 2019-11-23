@@ -19,6 +19,8 @@
 //#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+//#include <WiFiMulti.h>
+//WiFiMulti wifiMulti;
 
 const char* ssid     = "Xiaomi_duoduo";
 const char* password = "duoduo2011";
@@ -148,6 +150,26 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 String chipIdStr;
 
+// Not sure if WiFiClientSecure checks the validity date of the certificate. 
+// Setting clock just to be sure...
+void setClock() {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  Serial.print(F("Waiting for NTP time sync: "));
+  time_t nowSecs = time(nullptr);
+  while (nowSecs < 8 * 3600 * 2) {
+    delay(500);
+    Serial.print(F("."));
+    yield();
+    nowSecs = time(nullptr);
+  }
+
+  Serial.println();
+  struct tm timeinfo;
+  gmtime_r(&nowSecs, &timeinfo);
+  Serial.print(F("Current time: "));
+  Serial.print(asctime(&timeinfo));
+}
 
 void setup() {
   Serial.begin(115200);
@@ -161,11 +183,11 @@ void setup() {
 
   WiFi.begin(ssid, password);
   Serial.println("[ INFO ]\tConnecting to WiFi..");
-
   while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
   }
+
     Serial.println("[ INFO ]\tWiFi connection established.");
     Serial.print("[ INFO ]\tIP address: ");
     Serial.println(WiFi.localIP());
@@ -174,27 +196,14 @@ void setup() {
   pBLEScan = BLEDevice::getScan(); // create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setActiveScan(false); // active scan uses more power, but get results faster
-  pBLEScan->setInterval(5000); //2000 mseconds
-  pBLEScan->setWindow(4000);  // less or equal setInterval value
+  pBLEScan->setInterval(6000); //2000 mseconds
+  pBLEScan->setWindow(5000);  // less or equal setInterval value
 }
 
 
 void SubmitWiFi(void)
 {
-  Serial.println("[ INFO ]\tBLE scan starting..");
-  bool is_found = false;
-  String request;
-
-
-  BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
-  Serial.print("[ INFO ]\t");
-  Serial.print(foundDevices.getCount());
-  Serial.println(" BLE devices found.");
-
-  if (foundDevices.getCount() <= 0 ) 
-    return;
-
-  DynamicJsonDocument jdoc(1024);
+  DynamicJsonDocument jdoc(4096);
   JsonObject root = jdoc.to<JsonObject>();
   root["d"] = chipIdStr;
   root["f"] = GROUP_NAME;
@@ -202,55 +211,123 @@ void SubmitWiFi(void)
   root["l"] = LOCATION;
   #endif 
   JsonObject data = root.createNestedObject("s");
-
   JsonObject bt_network = data.createNestedObject("bluetooth");
-  BLEBeacon aBeacon = BLEBeacon();
-  for(int i=0; i<foundDevices.getCount(); i++)
-  {
-    BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
-    if (aDevice.haveManufacturerData()) {
-      aBeacon.setData(aDevice.getManufacturerData());
-      
-      if (aBeacon.getManufacturerId() == 0x004c) {
-        Serial.println("Advertised Beacon ManuId: " + String(aBeacon.getManufacturerId()));
-        aBeacon.setMajor(aBeacon.getMajor());
-        aBeacon.setMinor(aBeacon.getMinor());
-        String name = String(aBeacon.getMajor())+"-"+String(aBeacon.getMinor());
-        bt_network[name] = (int)aDevice.getRSSI();
-        is_found = true;
+
+  bool hasEddyStone = false;
+  DynamicJsonDocument bdoc(2048);
+  JsonObject broot = bdoc.to<JsonObject>();
+  broot["f"] = GROUP_NAME;
+  JsonObject bdata = broot.createNestedObject("b");
+
+  // //Wifi Scan 
+  // Serial.println("[ INFO ]\tWiFi scan starting..");
+  // int n = WiFi.scanNetworks(false, true);
+  // if (n == 0) {
+  //   Serial.println("[ ERROR ]\tNo networks found");
+  // } else {
+  //   Serial.print("[ INFO ]\t");
+  //   Serial.print(n);
+  //   Serial.println(" WiFi networks found.");
+  //   JsonObject wifi_network = data.createNestedObject("wifi");
+  //   for (int i = 0; i < n; ++i) {
+  //     wifi_network[WiFi.BSSIDstr(i)] = WiFi.RSSI(i);
+  //   }
+  // }
+
+  //Bluetooth scan
+  Serial.println("[ INFO ]\tBLE scan starting..");
+  BLEScanResults foundDevices = pBLEScan->start(BLE_SCANTIME);
+  int n = foundDevices.getCount();
+  if (n == 0) {
+    Serial.println("[ ERROR ]\tNo BLE devices found");
+    return;
+  }
+  else {
+    Serial.print("[ INFO ]\t");
+    Serial.print(n);
+    Serial.println(" BLE devices found.");
+
+    for(int i=0; i<n; i++)
+    {
+      BLEAdvertisedDevice aDevice = foundDevices.getDevice(i);
+      std::string mac = aDevice.getAddress().toString();
+      bt_network[(String)mac.c_str()] = (int)aDevice.getRSSI();
+
+      if (aDevice.haveServiceData()) {
+        // eddy beacon, send namespace, battery to /beacon
+        if (aDevice.getServiceDataUUID().getNative()->uuid.uuid16 == 0xfeaa) {
+          bdata[(String)mac.c_str()] = aDevice.getServiceData().c_str();
+          hasEddyStone = true;
+        }
       }
     }
-    else {
-    }
-    
   }
   pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
-  if (is_found) {
-    serializeJson(jdoc, request);
-    serializeJsonPretty(jdoc, Serial);
 
-    #ifdef DEBUG
-    Serial.println(request);
-    #endif
-        
-    WiFiClientSecure client;
-    //client.setCACert(test_root_ca);
-    client.setCertificate(test_client_cert); // for client verification
-    client.setPrivateKey(test_client_key);	// for client verification
-    //WiFiClient client;
-    const int httpPort = 443;
-    Serial.println("\nStarting connection to server...");
-    if (!client.connect(host, httpPort)) {
-      Serial.println("connection failed");
+  serializeJsonPretty(jdoc, Serial);  
+  
+  WiFiClientSecure client;
+  client.setCertificate(test_client_cert); // for client verification
+  client.setPrivateKey(test_client_key);	// for client verification
+  //WiFiClient client;
+  const int httpPort = 443;
+  Serial.println("\nStarting connection to server...");
+  if (!client.connect(host, httpPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+  // We now create a URI for the request
+  String url = "/passive";
+  Serial.print("[ INFO ]\tRequesting URL: ");
+  Serial.println(url);
+  String request;
+  serializeJson(jdoc, request); 
+
+  // This will send the request to the server
+  client.print(String("POST ") + url + " HTTP/1.1\r\n" +
+              "Host: " + host + "\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Content-Length: " + request.length() + "\r\n\r\n" +
+              request +
+              "\r\n\r\n"
+              );
+
+  unsigned long timeout = millis();
+  while (client.available() == 0) {
+    if (millis() - timeout > 5000) {
+      Serial.println("[ ERROR ]\tHTTP Client Timeout !");
+      client.stop();
       return;
     }
+  }
 
-    // We now create a URI for the request
-    String url = "/passive";
+  // Check HTTP status
+  char status[60] = {0};
+  client.readBytesUntil('\r', status, sizeof(status));
+  if (strcmp(status, "HTTP/1.1 200 OK") != 0) {
+    Serial.print(F("[ ERROR ]\tUnexpected Response: "));
+    Serial.println(status);
+    return;
+  }
+  else
+  {
+    Serial.println(F("[ INFO ]\tGot a 200 OK."));
+  }
 
-    Serial.print("[ INFO ]\tRequesting URL: ");
-    Serial.println(url);
+  char endOfHeaders[] = "\r\n\r\n";
+  if (!client.find(endOfHeaders)) {
+    Serial.println(F("[ ERROR ]\t Invalid Response"));
+    return;
+  }
+  else
+  {
+    Serial.println("[ INFO ]\tLooks like a valid response.");
+  }
 
+  if (hasEddyStone) {
+    String request;
+    serializeJson(bdoc, request); 
     // This will send the request to the server
     client.print(String("POST ") + url + " HTTP/1.1\r\n" +
                 "Host: " + host + "\r\n" +
@@ -263,7 +340,7 @@ void SubmitWiFi(void)
     unsigned long timeout = millis();
     while (client.available() == 0) {
       if (millis() - timeout > 5000) {
-        Serial.println("[ ERROR ]\tHTTP Client Timeout !");
+        Serial.println("[ ERROR ]\tHTTP Client Timeout at EddyStone !");
         client.stop();
         return;
       }
@@ -273,28 +350,30 @@ void SubmitWiFi(void)
     char status[60] = {0};
     client.readBytesUntil('\r', status, sizeof(status));
     if (strcmp(status, "HTTP/1.1 200 OK") != 0) {
-      Serial.print(F("[ ERROR ]\tUnexpected Response: "));
+      Serial.print(F("[ ERROR ]\tUnexpected Response at EddyStone: "));
       Serial.println(status);
       return;
     }
     else
     {
-      Serial.println(F("[ INFO ]\tGot a 200 OK."));
+      Serial.println(F("[ INFO ]\tGot a 200 OK at EddyStone."));
     }
 
     char endOfHeaders[] = "\r\n\r\n";
     if (!client.find(endOfHeaders)) {
-      Serial.println(F("[ ERROR ]\t Invalid Response"));
+      Serial.println(F("[ ERROR ]\t Invalid Response at EddyStone"));
       return;
     }
     else
     {
-      Serial.println("[ INFO ]\tLooks like a valid response.");
+      Serial.println("[ INFO ]\tLooks like a valid response at EddyStone.");
     }
-    client.stop();
-    Serial.println("[ INFO ]\tClosing connection.");
-    Serial.println("=============================================================");
   }
+
+  client.stop();
+  Serial.println("[ INFO ]\tClosing connection.");
+  Serial.println("=============================================================");
+
 
    #ifdef USE_DEEPSLEEP
    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
@@ -305,5 +384,5 @@ void SubmitWiFi(void)
 
 void loop() {
   SubmitWiFi();
-  delay(6000); //Delay 5 seconds
+  delay(10000); //Delay 
 }
