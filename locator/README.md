@@ -41,3 +41,18 @@ I (26457) wifi: station: 70:ef:00:43:96:67 join, AID=1, bg, 20
 I (26467) wifi softAP: station:70:ef:00:43:96:67 join, AID=1
 I (27657) tcpip_adapter: softAP assign IP to station,IP is: 192.168.4.2
 ```
+## Control
+
+connect to ESP
+set wifi ap
+http POST http://192.168.4.1/api/wifi ap=Xiaomi_duoduo password=duoduo2011
+retrieve information
+http GET http://192.168.31.97/api/info
+0 learning 1 scanning
+http POST http://192.168.31.97/api/mode mode:=0 family=ct location=cabin8 host=http://192.168.31.131:8005
+set bluetooth scan parameter duration in seconds, other two in mseconds
+http POST http://192.168.31.97/api/bluetooth duration:=20 interval:=5000 window:=3000
+
+start learning or scanning   1 start  0 stop
+http POST http://192.168.31.97/api/start value:=1
+

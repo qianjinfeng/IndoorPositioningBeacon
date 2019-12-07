@@ -12,6 +12,8 @@
 #include "freertos/event_groups.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -32,6 +34,12 @@
 #include "esp_eddystone_protocol.h"
 #include "esp_eddystone_api.h"
 
+#define SCRATCH_BUFSIZE (512)
+
+typedef struct rest_server_context {
+    char scratch[SCRATCH_BUFSIZE];
+} rest_server_context_t;
+
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
    If you'd rather not, just change the below entries to strings with
@@ -50,10 +58,24 @@ const int WIFI_CONNECTED_BIT = BIT0;
 static int s_retry_num = 0;
 
 static const char *TAG = "wifi softAP and station";
+static httpd_handle_t server = NULL;
+
+char g_ipaddress[32];
+int g_Mode = 0;  //0 learning; 1 scanning
+char c_host[64];
+char c_family[64];
+char c_location[64];
+char c_device[32];
+int i_duration = 20; //seconds for bluetooth scan
+int i_interval = 5000; //in msecs /0.625
+int i_window = 3000; //in msecs /0.625
+cJSON *bluetooth_json = NULL;
+cJSON *battery_json = NULL;
+cJSON *asset_json = NULL;
+bool g_Stopped = false;
 
 /* declare static functions */
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
-static void esp_eddystone_show_inform(const esp_eddystone_result_t* res);
 
 static esp_ble_scan_params_t ble_scan_params = {
     .scan_type              = BLE_SCAN_TYPE_PASSIVE,
@@ -64,107 +86,6 @@ static esp_ble_scan_params_t ble_scan_params = {
     .scan_duplicate         = BLE_SCAN_DUPLICATE_ENABLE
 };
 
-static httpd_handle_t server = NULL;
-
-static void esp_eddystone_show_inform(const esp_eddystone_result_t* res)
-{
-    switch(res->common.frame_type)
-    {
-        case EDDYSTONE_FRAME_TYPE_UID: {
-            ESP_LOGI(TAG, "Eddystone UID inform:");
-            ESP_LOGI(TAG, "Measured power(RSSI at 0m distance):%d dbm", res->inform.uid.ranging_data);
-            ESP_LOGI(TAG, "EDDYSTONE_DEMO: Namespace ID:0x");
-            esp_log_buffer_hex(TAG, res->inform.uid.namespace_id, 10);
-            ESP_LOGI(TAG, "EDDYSTONE_DEMO: Instance ID:0x");
-            esp_log_buffer_hex(TAG, res->inform.uid.instance_id, 6);
-            break;
-        }
-        case EDDYSTONE_FRAME_TYPE_URL: {
-            ESP_LOGI(TAG, "Eddystone URL inform:");
-            ESP_LOGI(TAG, "Measured power(RSSI at 0m distance):%d dbm", res->inform.url.tx_power);
-            ESP_LOGI(TAG, "URL: %s", res->inform.url.url);
-            break;
-        }
-        case EDDYSTONE_FRAME_TYPE_TLM: {
-            ESP_LOGI(TAG, "Eddystone TLM inform:");
-            ESP_LOGI(TAG, "version: %d", res->inform.tlm.version);
-            ESP_LOGI(TAG, "battery voltage: %d mV", res->inform.tlm.battery_voltage);
-            ESP_LOGI(TAG, "beacon temperature in degrees Celsius: %6.1f", res->inform.tlm.temperature);
-            ESP_LOGI(TAG, "adv pdu count since power-up: %d", res->inform.tlm.adv_count);
-            ESP_LOGI(TAG, "time since power-up: %d s", (res->inform.tlm.time)/10);
-            break;
-        }
-        default:
-            break;
-    }
-}
-
-static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
-{
-    esp_err_t err;
-
-    switch(event)
-    {
-        case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT: {
-            uint32_t duration = 0;
-            esp_ble_gap_start_scanning(duration);
-            break;
-        }
-        case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT: {
-            if((err = param->scan_start_cmpl.status) != ESP_BT_STATUS_SUCCESS) {
-                ESP_LOGE(TAG,"Scan start failed: %s", esp_err_to_name(err));
-            }
-            else {
-                ESP_LOGI(TAG,"Start scanning...");
-            }
-            break;
-        }
-        case ESP_GAP_BLE_SCAN_RESULT_EVT: {
-            esp_ble_gap_cb_param_t* scan_result = (esp_ble_gap_cb_param_t*)param;
-            switch(scan_result->scan_rst.search_evt)
-            {
-                case ESP_GAP_SEARCH_INQ_RES_EVT: {
-                    ESP_LOGI(TAG, "-------- Found----------");
-                    esp_log_buffer_hex("Bluetooth Device address:", scan_result->scan_rst.bda, ESP_BD_ADDR_LEN);
-                    ESP_LOGI(TAG, "RSSI of packet:%d dbm", scan_result->scan_rst.rssi);
-                    esp_eddystone_result_t eddystone_res;
-                    memset(&eddystone_res, 0, sizeof(eddystone_res));
-                    esp_err_t ret = esp_eddystone_decode(scan_result->scan_rst.ble_adv, scan_result->scan_rst.adv_data_len, &eddystone_res);
-                    if (ret) {
-                        // error:The received data is not an eddystone frame packet or a correct eddystone frame packet.
-                        if (scan_result->scan_rst.adv_data_len > 0) {
-                            ESP_LOGI(TAG, "adv data:");
-                            esp_log_buffer_hex(TAG, &scan_result->scan_rst.ble_adv[0], scan_result->scan_rst.adv_data_len);
-                        }
-                    } else {   
-                        // The received adv data is a correct eddystone frame packet.
-                        // Here, we get the eddystone infomation in eddystone_res, we can use the data in res to do other things.
-                        // For example, just print them:
-                        ESP_LOGI(TAG, "--------Eddystone Found----------");
-                        esp_eddystone_show_inform(&eddystone_res);
-                    }
-
-
-                    break;
-                }
-                default:
-                    break;
-            }
-            break;
-        }
-        case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:{
-            if((err = param->scan_stop_cmpl.status) != ESP_BT_STATUS_SUCCESS) {
-                ESP_LOGE(TAG,"Scan stop failed: %s", esp_err_to_name(err));
-            }
-            else {
-                ESP_LOGI(TAG,"Stop scan successfully");
-            }
-            break;
-        }
-        default:
-            break;
-    }
-}
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -187,7 +108,6 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
                 // Write out data
                 // printf("%.*s", evt->data_len, (char*)evt->data);
             }
-
             break;
         case HTTP_EVENT_ON_FINISH:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
@@ -204,28 +124,22 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     }
     return ESP_OK;
 }
-
-static void http_rest_with_url(void)
-{
-    esp_http_client_config_t config = {
-        .url = "http://192.168.31.131:8005/ping",
+static esp_http_client_config_t client_config = {
         .event_handler = _http_event_handler,
     };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+static void http_rest_post_data(esp_http_client_config_t *aconfig, const char *post_data)
+{
+    // esp_http_client_config_t config = {
+    //     .url = "http://192.168.31.131:8005/data",
+    //     .event_handler = _http_event_handler,
+    //     .is_async = true,
+    //     .timeout_ms = 5000,
+    // };
+    // const char *post_data = "field1=value1&field2=value2";
+    
+    esp_http_client_handle_t client = esp_http_client_init(aconfig);
+    esp_err_t err;
 
-    // GET
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d",
-                esp_http_client_get_status_code(client),
-                esp_http_client_get_content_length(client));
-    } else {
-        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-    }
-
-    // POST
-    const char *post_data = "field1=value1&field2=value2";
-    esp_http_client_set_url(client, "http://httpbin.org/post");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
     err = esp_http_client_perform(client);
@@ -240,104 +154,190 @@ static void http_rest_with_url(void)
     esp_http_client_cleanup(client);
 }
 
-/* An HTTP GET handler */
-static esp_err_t hello_get_handler(httpd_req_t *req)
+static void post_data()
 {
-    char*  buf;
-    size_t buf_len;
-
-    /* Get header value string length and allocate memory for length + 1,
-     * extra byte for null termination */
-    buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
-    if (buf_len > 1) {
-        buf = malloc(buf_len);
-        /* Copy null terminated value string into buffer */
-        if (httpd_req_get_hdr_value_str(req, "Host", buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Found header => Host: %s", buf);
-        }
-        free(buf);
+    ESP_LOGI(TAG, "host:%s, family:%s, Device:%s, location:%s", c_host, c_family, c_device, c_location);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "f", c_family);
+    cJSON_AddStringToObject(root, "d", c_device);
+    cJSON_AddStringToObject(root, "l", c_location);
+    cJSON *sensor_json = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "s", sensor_json);
+    cJSON_AddItemToObject(sensor_json, "bluetooth", bluetooth_json);
+    
+    char c_url[80];
+    if (g_Mode) { //scanning 
+        sprintf(c_url, "%s/passive", c_host);
     }
-
-    buf_len = httpd_req_get_hdr_value_len(req, "Test-Header-2") + 1;
-    if (buf_len > 1) {
-        buf = malloc(buf_len);
-        if (httpd_req_get_hdr_value_str(req, "Test-Header-2", buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Found header => Test-Header-2: %s", buf);
-        }
-        free(buf);
+    else {  //learning
+        sprintf(c_url, "%s/data", c_host);
     }
-
-    buf_len = httpd_req_get_hdr_value_len(req, "Test-Header-1") + 1;
-    if (buf_len > 1) {
-        buf = malloc(buf_len);
-        if (httpd_req_get_hdr_value_str(req, "Test-Header-1", buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Found header => Test-Header-1: %s", buf);
-        }
-        free(buf);
-    }
-
-    /* Read URL query string length and allocate memory for length + 1,
-     * extra byte for null termination */
-    buf_len = httpd_req_get_url_query_len(req) + 1;
-    if (buf_len > 1) {
-        buf = malloc(buf_len);
-        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Found URL query => %s", buf);
-            char param[32];
-            /* Get value of expected key from query string */
-            if (httpd_query_key_value(buf, "query1", param, sizeof(param)) == ESP_OK) {
-                ESP_LOGI(TAG, "Found URL query parameter => query1=%s", param);
-            }
-            if (httpd_query_key_value(buf, "query3", param, sizeof(param)) == ESP_OK) {
-                ESP_LOGI(TAG, "Found URL query parameter => query3=%s", param);
-            }
-            if (httpd_query_key_value(buf, "query2", param, sizeof(param)) == ESP_OK) {
-                ESP_LOGI(TAG, "Found URL query parameter => query2=%s", param);
-            }
-        }
-        free(buf);
-    }
-
-    /* Set some custom headers */
-    httpd_resp_set_hdr(req, "Custom-Header-1", "Custom-Value-1");
-    httpd_resp_set_hdr(req, "Custom-Header-2", "Custom-Value-2");
-
-    /* Send response with custom headers and body set as the
-     * string passed in user context*/
-    const char* resp_str = (const char*) req->user_ctx;
-    httpd_resp_send(req, resp_str, strlen(resp_str));
-
-    /* After sending the HTTP response the old HTTP request
-     * headers are lost. Check if HTTP request headers can be read now. */
-    if (httpd_req_get_hdr_value_len(req, "Host") == 0) {
-        ESP_LOGI(TAG, "Request headers lost");
-    }
-    return ESP_OK;
+    client_config.url = c_url;
+    const char *sys_info = cJSON_Print(root);
+    http_rest_post_data(&client_config, sys_info);
+    free((void *)sys_info);
+    cJSON_Delete(root);
+}
+static void post_battery()
+{
+    ESP_LOGI(TAG, "host:%s, family:%s, Device:%s, location:%s", c_host, c_family, c_device, c_location);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "f", c_family);
+    cJSON_AddItemToObject(root, "b", battery_json);
+    
+    char c_url[80];
+    sprintf(c_url, "%s/battery", c_host);
+    client_config.url = c_url;
+    const char *sys_info = cJSON_Print(root);
+    http_rest_post_data(&client_config, sys_info);
+    free((void *)sys_info);
+    cJSON_Delete(root);
+}
+static void post_asset()
+{
+    ESP_LOGI(TAG, "host:%s, family:%s, Device:%s, location:%s", c_host, c_family, c_device, c_location);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "f", c_family);
+    cJSON_AddItemToObject(root, "b", asset_json);
+    
+    char c_url[80];
+    sprintf(c_url, "%s/asset", c_host);
+    client_config.url = c_url;
+    const char *sys_info = cJSON_Print(root);
+    http_rest_post_data(&client_config, sys_info);
+    free((void *)sys_info);
+    cJSON_Delete(root);
 }
 
-static const httpd_uri_t hello = {
-    .uri       = "/hello",
-    .method    = HTTP_GET,
-    .handler   = hello_get_handler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
-    .user_ctx  = "Hello World!"
-};
+static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
+{
+    esp_err_t err;
+
+    switch(event)
+    {
+        case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT: {
+            // uint32_t duration = 10;
+            // esp_ble_gap_start_scanning(duration);
+            ESP_LOGI(TAG,"-----------ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT------ ");
+            break;
+        }
+        case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT: {
+            if((err = param->scan_start_cmpl.status) != ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGE(TAG,"Scan start failed: %s", esp_err_to_name(err));
+            }
+            else {
+                ESP_LOGI(TAG,"Start scanning...");
+                bluetooth_json = cJSON_CreateObject();
+                asset_json = cJSON_CreateObject();
+                battery_json = cJSON_CreateObject();
+            }
+            break;
+        }
+        case ESP_GAP_BLE_SCAN_RESULT_EVT: {
+            esp_ble_gap_cb_param_t* scan_result = (esp_ble_gap_cb_param_t*)param;
+            switch(scan_result->scan_rst.search_evt)
+            {
+                case ESP_GAP_SEARCH_INQ_RES_EVT: {
+                    ESP_LOGI(TAG, "-------- Found----------");
+                    esp_log_buffer_hex("Bluetooth Device address:", scan_result->scan_rst.bda, ESP_BD_ADDR_LEN);
+                    ESP_LOGI(TAG, "RSSI of packet:%d dbm", scan_result->scan_rst.rssi);
+                    char bAddress[30];
+                    sprintf(bAddress, "%02x:%02x:%02x:%02x:%02x:%02x", scan_result->scan_rst.bda[0], 
+                                                                       scan_result->scan_rst.bda[1], 
+                                                                       scan_result->scan_rst.bda[2], 
+                                                                       scan_result->scan_rst.bda[3], 
+                                                                       scan_result->scan_rst.bda[4], 
+                                                                       scan_result->scan_rst.bda[5]);
+                    cJSON_AddNumberToObject(bluetooth_json, bAddress, scan_result->scan_rst.rssi);
+
+                    esp_eddystone_result_t eddystone_res;
+                    memset(&eddystone_res, 0, sizeof(eddystone_res));
+                    esp_err_t ret = esp_eddystone_decode(scan_result->scan_rst.ble_adv, scan_result->scan_rst.adv_data_len, &eddystone_res);
+                    if (ret) {
+                        // error:The received data is not an eddystone frame packet or a correct eddystone frame packet.
+                        if (scan_result->scan_rst.adv_data_len > 0) {
+                            ESP_LOGI(TAG, "adv data:");
+                            esp_log_buffer_hex(TAG, &scan_result->scan_rst.ble_adv[0], scan_result->scan_rst.adv_data_len);
+                        }
+                    } else {   
+                        // The received adv data is a correct eddystone frame packet.
+                        // Here, we get the eddystone infomation in eddystone_res, we can use the data in res to do other things.
+                        // For example, just print them:
+                        ESP_LOGI(TAG, "--------Eddystone Found----------");
+                        //esp_eddystone_show_inform(&eddystone_res);
+                        switch(eddystone_res.common.frame_type)
+                        {
+                            case EDDYSTONE_FRAME_TYPE_UID: {
+                                ESP_LOGI(TAG, "EDDYSTONE_DEMO: Instance ID:0x");
+                                char aInstance[30];
+                                sprintf(aInstance, "%02x:%02x:%02x:%02x:%02x:%02x", eddystone_res.inform.uid.instance_id[0], 
+                                                                       eddystone_res.inform.uid.instance_id[1], 
+                                                                       eddystone_res.inform.uid.instance_id[2], 
+                                                                       eddystone_res.inform.uid.instance_id[3], 
+                                                                       eddystone_res.inform.uid.instance_id[4], 
+                                                                       eddystone_res.inform.uid.instance_id[5]);
+                                cJSON_AddStringToObject(asset_json, bAddress, aInstance);
+                                esp_log_buffer_hex(TAG, eddystone_res.inform.uid.instance_id, 6);
+                                break;
+                            }
+                            case EDDYSTONE_FRAME_TYPE_TLM: {
+                                ESP_LOGI(TAG, "battery voltage: %d mV", eddystone_res.inform.tlm.battery_voltage);
+                                cJSON_AddNumberToObject(battery_json, bAddress, eddystone_res.inform.tlm.battery_voltage);
+                                break;
+                            }
+                            default:
+                                break;
+                        }
+                    }
+
+
+                    break;
+                }
+                case ESP_GAP_SEARCH_INQ_CMPL_EVT: {
+                    ESP_LOGI(TAG, "--------SEARCH_INQ_CMPL----------");
+                    post_data();
+                    sleep(2);
+                    post_asset();
+                    sleep(2);
+                    post_battery();
+                    
+                    if (g_Stopped == false) {
+                        sleep(8);
+                        esp_ble_gap_start_scanning(i_duration);
+                    }
+                    else {
+                        ESP_LOGI(TAG,"Stop scan");
+                    }
+                }
+                default:
+                    break;
+            }
+            break;
+        }
+        case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:{
+            if((err = param->scan_stop_cmpl.status) != ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGE(TAG,"Scan stop failed: %s", esp_err_to_name(err));
+            }
+            else {
+                ESP_LOGI(TAG,"Stop scan successfully");
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+
 static esp_err_t system_info_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
     cJSON *root = cJSON_CreateObject();
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    cJSON_AddStringToObject(root, "f", IDF_VER);
-    cJSON_AddStringToObject(root, "d", IDF_VER);
-    cJSON_AddStringToObject(root, "l", IDF_VER);
+    cJSON_AddStringToObject(root, "mac", c_device);
+    cJSON_AddStringToObject(root, "ip", g_ipaddress);
     cJSON_AddNumberToObject(root, "cores", chip_info.cores);
-    cJSON *sensor_json = cJSON_CreateObject();
-    cJSON_AddItemToObject(root, "s", sensor_json);
-    cJSON *bluetooth_json = cJSON_CreateObject();
-    cJSON_AddItemToObject(sensor_json, "bluetooth", bluetooth_json);
-    cJSON_AddStringToObject(bluetooth_json, "version", IDF_VER);
 
     const char *sys_info = cJSON_Print(root);
     httpd_resp_sendstr(req, sys_info);
@@ -345,77 +345,208 @@ static esp_err_t system_info_get_handler(httpd_req_t *req)
     cJSON_Delete(root);
     return ESP_OK;
 }
-    /* URI handler for fetching system info */
-static const httpd_uri_t system_info_get_uri = {
-        .uri = "/info",
-        .method = HTTP_GET,
-        .handler = system_info_get_handler,
-        .user_ctx = NULL
-    };
-/* An HTTP POST handler */
-static esp_err_t echo_post_handler(httpd_req_t *req)
-{
-    char buf[100];
-    int ret, remaining = req->content_len;
 
-    while (remaining > 0) {
-        /* Read the data for the request */
-        if ((ret = httpd_req_recv(req, buf,
-                        MIN(remaining, sizeof(buf)))) <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-                /* Retry receiving if timeout occurred */
-                continue;
-            }
+static esp_err_t set_mode_handler(httpd_req_t *req)
+{
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    int received = 0;
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post mode value");
             return ESP_FAIL;
         }
-
-        /* Send back the same data */
-        httpd_resp_send_chunk(req, buf, ret);
-        remaining -= ret;
-
-        /* Log data received */
-        ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
-        ESP_LOGI(TAG, "%.*s", ret, buf);
-        ESP_LOGI(TAG, "====================================");
+        cur_len += received;
     }
+    buf[total_len] = '\0';
 
-    // End response
-    httpd_resp_send_chunk(req, NULL, 0);
-    http_rest_with_url();
+    cJSON *root = cJSON_Parse(buf);
+    g_Mode = cJSON_GetObjectItem(root, "mode")->valueint;
+    ESP_LOGI(TAG, "mode is %d", g_Mode);
+    sprintf(c_host, "%s", cJSON_GetObjectItem(root, "host")->valuestring);
+    sprintf(c_family, "%s", cJSON_GetObjectItem(root, "family")->valuestring);
+    sprintf(c_location, "%s", cJSON_GetObjectItem(root, "location")->valuestring);
+    
+    cJSON_Delete(root);
+    httpd_resp_sendstr(req, "Post mode value successfully");
     return ESP_OK;
 }
 
-static const httpd_uri_t echo = {
-    .uri       = "/echo",
-    .method    = HTTP_POST,
-    .handler   = echo_post_handler,
-    .user_ctx  = NULL
-};
-
-static httpd_handle_t start_webserver(void)
+static esp_err_t set_bluetooth_handler(httpd_req_t *req)
 {
-    httpd_handle_t server = NULL;
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
-    // Start the httpd server
-    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
-    if (httpd_start(&server, &config) == ESP_OK) {
-        // Set URI handlers
-        ESP_LOGI(TAG, "Registering URI handlers");
-        httpd_register_uri_handler(server, &hello);
-        httpd_register_uri_handler(server, &echo);
-        httpd_register_uri_handler(server, &system_info_get_uri);
-        return server;
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    int received = 0;
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
     }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post bluetooth value");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
 
-    ESP_LOGI(TAG, "Error starting server!");
-    return NULL;
+    cJSON *root = cJSON_Parse(buf);
+    i_duration = cJSON_GetObjectItem(root, "duration")->valueint;
+    i_interval = cJSON_GetObjectItem(root, "interval")->valueint;
+    i_window = cJSON_GetObjectItem(root, "window")->valueint;
+    ESP_LOGI(TAG, "Light control: duration = %d, interval = %d, window = %d", i_duration, i_interval, i_window);
+    cJSON_Delete(root);
+    httpd_resp_sendstr(req, "Post bluetooth value successfully");
+    return ESP_OK;
+}
+static esp_err_t set_wifi_handler(httpd_req_t *req)
+{
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    int received = 0;
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post wifi value");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    wifi_config_t wifi_config_sta;
+    sprintf((char*)wifi_config_sta.sta.ssid, "%s", cJSON_GetObjectItem(root, "ap")->valuestring);
+    sprintf((char*)wifi_config_sta.sta.password, "%s", cJSON_GetObjectItem(root, "password")->valuestring);
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
+    esp_wifi_connect();
+    cJSON_Delete(root);
+    httpd_resp_sendstr(req, "Post wifi value successfully");
+    return ESP_OK;
 }
 
-static void stop_webserver(httpd_handle_t server)
+static esp_err_t user_start_stop_handler(httpd_req_t *req)
 {
-    // Stop the httpd server
-    httpd_stop(server);
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
+    int received = 0;
+    if (total_len >= SCRATCH_BUFSIZE) {
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            /* Respond with 500 Internal Server Error */
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post wifi value");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    int nValue = cJSON_GetObjectItem(root, "value")->valueint;
+    ESP_LOGI(TAG, "to stop is %d", nValue);
+    if (nValue) {
+        g_Stopped = false;
+        /*<! set scan parameters */
+        ble_scan_params.scan_interval = i_interval / 0.625;
+        ble_scan_params.scan_window = i_window / 0.625;
+        esp_ble_gap_set_scan_params(&ble_scan_params);
+        esp_ble_gap_start_scanning(i_duration);
+    }
+    else {
+        g_Stopped = true;
+    }
+    cJSON_Delete(root);
+    httpd_resp_sendstr(req, "Post wifi value successfully");
+    return ESP_OK;
+}
+
+esp_err_t start_rest_server()
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    rest_server_context_t *rest_context = calloc(1, sizeof(rest_server_context_t));
+    if (rest_context == NULL ) {
+        ESP_LOGI(TAG, "No memory for rest context");
+    };
+
+    ESP_LOGI(TAG, "Starting HTTP Server");
+    if (httpd_start(&server, &config) != ESP_OK) {
+        ESP_LOGI(TAG, "Error starting server!");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
+
+    /* URI handler for fetching system info */
+    httpd_uri_t system_info_get_uri = {
+        .uri = "/api/info",
+        .method = HTTP_GET,
+        .handler = system_info_get_handler,
+        .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &system_info_get_uri);
+
+    /* URI handler for setting wifi */
+    httpd_uri_t user_set_wifi_uri = {
+        .uri = "/api/wifi",
+        .method = HTTP_POST,
+        .handler = set_wifi_handler,
+        .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &user_set_wifi_uri);
+
+    /* URI handler for setting bluetooth */
+    httpd_uri_t user_set_bluetooth_uri = {
+        .uri = "/api/bluetooth",
+        .method = HTTP_POST,
+        .handler = set_bluetooth_handler,
+        .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &user_set_bluetooth_uri);
+
+    /* URI handler for set learn or scan */
+    httpd_uri_t user_set_mode_uri = {
+        .uri = "/api/mode",
+        .method = HTTP_POST,
+        .handler = set_mode_handler,
+        .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &user_set_mode_uri);
+
+    /* URI handler for start learn or scan */
+    httpd_uri_t user_start_stop_uri = {
+        .uri = "/api/start",
+        .method = HTTP_POST,
+        .handler = user_start_stop_handler,
+        .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &user_start_stop_uri);
+
+    return ESP_OK; 
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
@@ -442,6 +573,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        sprintf(g_ipaddress, IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -475,20 +607,24 @@ void wifi_init_softap(void)
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    wifi_config_t wifi_config_sta = {
-        .sta = {
-            .ssid = "Xiaomi_duoduo",
-            .password = "duoduo2011"
-        },
-    };
+    // wifi_config_t wifi_config_sta = {
+    //     .sta = {
+    //         .ssid = "Xiaomi_duoduo",
+    //         .password = "duoduo2011"
+    //     },
+    // };
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
+    // ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s",
              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+
+    uint8_t mac[6];
+    ESP_ERROR_CHECK(esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &mac, sizeof(mac) * 8));
+    sprintf(c_device, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 void app_main(void)
@@ -511,7 +647,7 @@ void app_main(void)
     wifi_init_softap();
 
     /* Start the server for the first time */
-    server = start_webserver();
+    start_rest_server();
 
     esp_bluedroid_init();
     esp_bluedroid_enable();
@@ -521,6 +657,4 @@ void app_main(void)
         ESP_LOGE(TAG,"gap register error: %s", esp_err_to_name(status));
         return;
     }
-    /*<! set scan parameters */
-    esp_ble_gap_set_scan_params(&ble_scan_params);
 }
