@@ -118,3 +118,6 @@ qian@qian-Satellite-Radius-P55W-B:~/workplace/find3-master/server/main$ cat beac
     }
 }
 
+
+http GET http://192.168.31.131:8003/api/v1/device/ct/ff:ee:dd:cc:bb:aa
+http GET http://192.168.31.131:8003/api/v1/battery/ct/ff:ee:dd:cc:bb:aa

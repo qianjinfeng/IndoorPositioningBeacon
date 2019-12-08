@@ -270,7 +270,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
                             case EDDYSTONE_FRAME_TYPE_UID: {
                                 ESP_LOGI(TAG, "EDDYSTONE_DEMO: Instance ID:0x");
                                 char aInstance[30];
-                                sprintf(aInstance, "%02x:%02x:%02x:%02x:%02x:%02x", eddystone_res.inform.uid.instance_id[0], 
+                                sprintf(aInstance, "%02x%02x%02x%02x%02x%02x", eddystone_res.inform.uid.instance_id[0], 
                                                                        eddystone_res.inform.uid.instance_id[1], 
                                                                        eddystone_res.inform.uid.instance_id[2], 
                                                                        eddystone_res.inform.uid.instance_id[3], 
