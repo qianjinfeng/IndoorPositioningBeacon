@@ -72,13 +72,13 @@ int i_window = 30; //in msecs /0.625 = 48 = 0x30
 cJSON *bluetooth_json = NULL;
 cJSON *battery_json = NULL;
 cJSON *asset_json = NULL;
-bool g_Stopped = false;
+bool g_Stopped = true;
 
 /* declare static functions */
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
 
 static esp_ble_scan_params_t ble_scan_params = {
-    .scan_type              = BLE_SCAN_TYPE_ACTIVE,
+    .scan_type              = BLE_SCAN_TYPE_PASSIVE,
     .own_addr_type          = BLE_ADDR_TYPE_PUBLIC,
     .scan_filter_policy     = BLE_SCAN_FILTER_ALLOW_ALL,
     .scan_interval          = 0x40,
@@ -128,15 +128,7 @@ static esp_http_client_config_t client_config = {
         .event_handler = _http_event_handler,
     };
 static void http_rest_post_data(esp_http_client_config_t *aconfig, const char *post_data)
-{
-    // esp_http_client_config_t config = {
-    //     .url = "http://192.168.31.131:8005/data",
-    //     .event_handler = _http_event_handler,
-    //     .is_async = true,
-    //     .timeout_ms = 5000,
-    // };
-    // const char *post_data = "field1=value1&field2=value2";
-    
+{    
     esp_http_client_handle_t client = esp_http_client_init(aconfig);
     esp_err_t err;
 
@@ -333,11 +325,22 @@ static esp_err_t system_info_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
     cJSON *root = cJSON_CreateObject();
-    esp_chip_info_t chip_info;
-    esp_chip_info(&chip_info);
+
     cJSON_AddStringToObject(root, "mac", c_device);
     cJSON_AddStringToObject(root, "ip", g_ipaddress);
-    cJSON_AddNumberToObject(root, "cores", chip_info.cores);
+    if (g_Mode) {
+        cJSON_AddStringToObject(root, "mode", "scanning");
+    } else
+    {
+        cJSON_AddStringToObject(root, "mode", "learning");
+    }
+    if (g_Stopped) {
+        cJSON_AddStringToObject(root, "scanning", "false");
+    } else
+    {
+        cJSON_AddStringToObject(root, "scanning", "true");
+    }
+    
 
     const char *sys_info = cJSON_Print(root);
     httpd_resp_sendstr(req, sys_info);
