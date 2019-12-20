@@ -46,6 +46,7 @@ I (27657) tcpip_adapter: softAP assign IP to station,IP is: 192.168.4.2
 connect to ESP
 set wifi ap
 http POST http://192.168.4.1/api/wifi ap=Xiaomi_duoduo password=duoduo2011
+http GET http://192.168.4.1/api/reboot
 retrieve information
 http GET http://192.168.31.97/api/info
 0 learning 1 scanning

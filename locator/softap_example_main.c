@@ -60,19 +60,19 @@ static int s_retry_num = 0;
 static const char *TAG = "wifi softAP and station";
 static httpd_handle_t server = NULL;
 
-char g_ipaddress[32];
-int g_Mode = 0;  //0 learning; 1 scanning
-char c_host[64];
-char c_family[64];
-char c_location[64];
-char c_device[32];
+char g_ipaddress[32] = { 0 };
+int g_Mode = 1;  //0 learning; 1 scanning
+char c_host[64] = { 0 };
+char c_family[64] = { 0 };
+char c_location[64] = { 0 };
+char c_device[32] = { 0 };
 int i_duration = 20; //seconds for bluetooth scan
 int i_interval = 40; //in msecs /0.625 = 64= 0x40
 int i_window = 30; //in msecs /0.625 = 48 = 0x30
 cJSON *bluetooth_json = NULL;
 cJSON *battery_json = NULL;
 cJSON *asset_json = NULL;
-bool g_Stopped = true;
+bool g_running = false;
 
 /* declare static functions */
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
@@ -129,6 +129,10 @@ static esp_http_client_config_t client_config = {
     };
 static void http_rest_post_data(esp_http_client_config_t *aconfig, const char *post_data)
 {    
+    if (g_running == false || c_host[0] == 0) {
+        ESP_LOGD(TAG, "Not running or NO Host configured");
+        return;
+    }
     esp_http_client_handle_t client = esp_http_client_init(aconfig);
     esp_err_t err;
 
@@ -208,8 +212,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
     switch(event)
     {
         case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT: {
-            // uint32_t duration = 10;
-            // esp_ble_gap_start_scanning(duration);
+            esp_ble_gap_start_scanning(i_duration);
             ESP_LOGI(TAG,"-----------ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT------ ");
             break;
         }
@@ -293,7 +296,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
                     sleep(2);
                     post_battery();
                     
-                    if (g_Stopped == false) {
+                    if (g_running) {
                         sleep(8);
                         esp_ble_gap_start_scanning(i_duration);
                     }
@@ -329,16 +332,16 @@ static esp_err_t system_info_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "mac", c_device);
     cJSON_AddStringToObject(root, "ip", g_ipaddress);
     if (g_Mode) {
-        cJSON_AddStringToObject(root, "mode", "scanning");
+        cJSON_AddStringToObject(root, "mode", "tracking");
     } else
     {
         cJSON_AddStringToObject(root, "mode", "learning");
     }
-    if (g_Stopped) {
-        cJSON_AddStringToObject(root, "scanning", "false");
+    if (g_running) {
+        cJSON_AddStringToObject(root, "scanning", "true");
     } else
     {
-        cJSON_AddStringToObject(root, "scanning", "true");
+        cJSON_AddStringToObject(root, "scanning", "false");
     }
     
 
@@ -450,7 +453,14 @@ static esp_err_t set_wifi_handler(httpd_req_t *req)
     httpd_resp_sendstr(req, "Post wifi value successfully");
     return ESP_OK;
 }
-
+void set_bluetooth_parameter()
+{
+    /*<! set scan parameters */
+    ble_scan_params.scan_interval = i_interval / 0.625;
+    ble_scan_params.scan_window = i_window / 0.625;
+    esp_ble_gap_set_scan_params(&ble_scan_params);
+    
+}
 static esp_err_t user_start_stop_handler(httpd_req_t *req)
 {
     int total_len = req->content_len;
@@ -475,17 +485,14 @@ static esp_err_t user_start_stop_handler(httpd_req_t *req)
 
     cJSON *root = cJSON_Parse(buf);
     int nValue = cJSON_GetObjectItem(root, "value")->valueint;
-    ESP_LOGI(TAG, "to stop is %d", nValue);
     if (nValue) {
-        g_Stopped = false;
-        /*<! set scan parameters */
-        ble_scan_params.scan_interval = i_interval / 0.625;
-        ble_scan_params.scan_window = i_window / 0.625;
-        esp_ble_gap_set_scan_params(&ble_scan_params);
-        esp_ble_gap_start_scanning(i_duration);
+        g_running = true;
+        set_bluetooth_parameter(); // start scan in callback
+        ESP_LOGI(TAG, "running is true");
     }
     else {
-        g_Stopped = true;
+        g_running = false;
+        ESP_LOGI(TAG, "running is false");
     }
     cJSON_Delete(root);
     httpd_resp_sendstr(req, "Post wifi value successfully");
@@ -596,6 +603,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
 void wifi_init_softap(void)
 {
+    uint8_t mac[6];
+    ESP_ERROR_CHECK(esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &mac, sizeof(mac) * 8));
+    sprintf(c_device, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
     s_wifi_event_group = xEventGroupCreate();
 
     esp_netif_init();
@@ -612,7 +623,6 @@ void wifi_init_softap(void)
     wifi_config_t wifi_config = {
         .ap = {
             .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .ssid_len = strlen(EXAMPLE_ESP_WIFI_SSID),
             .password = EXAMPLE_ESP_WIFI_PASS,
             .max_connection = EXAMPLE_MAX_STA_CONN,
             .authmode = WIFI_AUTH_WPA_WPA2_PSK
@@ -622,13 +632,6 @@ void wifi_init_softap(void)
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    // wifi_config_t wifi_config_sta = {
-    //     .sta = {
-    //         .ssid = "Xiaomi_duoduo",
-    //         .password = "duoduo2011"
-    //     },
-    // };
-
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config));
     // ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
@@ -637,9 +640,7 @@ void wifi_init_softap(void)
     ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s",
              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
 
-    uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &mac, sizeof(mac) * 8));
-    sprintf(c_device, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
 }
 
 void app_main(void)
