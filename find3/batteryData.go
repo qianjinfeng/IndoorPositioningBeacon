@@ -21,7 +21,7 @@ func (a *BatteryData) Validate() (err error) {
 
 	numFingerprints := len(a.Payloads)
 	if numFingerprints == 0 {
-		err = errors.New("asset data cannot be empty")
+		err = errors.New("battery data cannot be empty")
 	}
 	return
 }

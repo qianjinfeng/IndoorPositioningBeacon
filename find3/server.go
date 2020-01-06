@@ -547,8 +547,8 @@ func Run() (err error) {
 	})
 	r.OPTIONS("/api/v1/battery/:family/*instance", func(c *gin.Context) { c.String(200, "OK") })
 	r.GET("/api/v1/battery/:family/*instance", handlerApiV1Battery)
-	r.OPTIONS("/api/v1/device/:family/*instance", func(c *gin.Context) { c.String(200, "OK") })
-	r.GET("/api/v1/device/:family/*instance", handlerApiV1Device)
+	r.OPTIONS("/api/v1/location_asset/:family/*instance", func(c *gin.Context) { c.String(200, "OK") })
+	r.GET("/api/v1/location_asset/:family/*instance", handlerApiV1LocationAsset)
 	r.OPTIONS("/api/v1/devices/*family", func(c *gin.Context) { c.String(200, "OK") })
 	r.GET("/api/v1/devices/*family", handlerApiV1Devices)
 	r.OPTIONS("/api/v1/location/:family/*device", func(c *gin.Context) { c.String(200, "OK") })
@@ -619,8 +619,8 @@ func handlerApiV1Battery(c *gin.Context) {
 	}
 }
 
-func handlerApiV1Device(c *gin.Context) {
-	err := func(c *gin.Context) (err error) {
+func handlerApiV1LocationAsset(c *gin.Context) {
+	s, analysis, err := func(c *gin.Context) (s models.SensorData, analysis models.LocationAnalysis, err error) {
 		family := strings.ToLower(strings.TrimSpace(c.Param("family")))
 		instance := strings.TrimSpace(c.Param("instance")[1:])
 		d, err := database.Open(family, true)
@@ -632,11 +632,45 @@ func handlerApiV1Device(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "got device by instance", "success": true, "device": mac})
+		device := "bluetooth-" + mac
+		s, err = d.GetLatest(device)
+		d.Close()
+		if err != nil {
+			return
+		}
+		analysis, err = api.AnalyzeSensorData(s)
+		if err != nil {
+			err = api.Calibrate(family, true)
+			if err != nil {
+				logger.Log.Warn(err)
+				return
+			}
+		}
+
+		gpsData, err := api.GetGPSData(family)
+		if _, ok := gpsData[analysis.Guesses[0].Location]; ok {
+			s.GPS = models.GPS{
+				Latitude:  gpsData[analysis.Guesses[0].Location].GPS.Latitude,
+				Longitude: gpsData[analysis.Guesses[0].Location].GPS.Longitude,
+			}
+		}
 		return
 	}(c)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": err.Error(), "success": err == nil})
+	} else {
+		assetLocation := struct {
+			Location        string     `json:"loc"`
+			GPS             models.GPS `json:"gps"`
+			Probability     float64    `json:"prob"`
+			LastSeenTimeAgo int64      `json:"seen"`
+		}{
+			Location:        analysis.Guesses[0].Location,
+			GPS:             s.GPS,
+			Probability:     analysis.Guesses[0].Probability,
+			LastSeenTimeAgo: time.Now().UTC().UnixNano()/int64(time.Second) - (s.Timestamp / 1000),
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "ok", "success": err == nil, "data": assetLocation})
 	}
 }
 
@@ -1443,7 +1477,6 @@ func sendOutData(p models.SensorData) (analysis models.LocationAnalysis, err err
 		Location: analysis.Guesses[0].Location,
 		Time:     p.Timestamp,
 	}
-
 	bTarget, err := json.Marshal(payload)
 	if err != nil {
 		return

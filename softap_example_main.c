@@ -9,22 +9,18 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
-#include "esp_efuse.h"
-#include "esp_efuse_table.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_spiffs.h"
 #include <sys/param.h>
 
 #include <cJSON.h>
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-#include <esp_http_server.h>
-#include "esp_tls.h"
 #include "esp_http_client.h"
 
 #include "esp_bt.h"
@@ -34,21 +30,8 @@
 #include "esp_eddystone_protocol.h"
 #include "esp_eddystone_api.h"
 
-#define SCRATCH_BUFSIZE (512)
 
-typedef struct rest_server_context {
-    char scratch[SCRATCH_BUFSIZE];
-} rest_server_context_t;
-
-/* The examples use WiFi configuration that you can set via project configuration menu.
-
-   If you'd rather not, just change the below entries to strings with
-   the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
-*/
-#define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
-#define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
-#define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
-#define EXAMPLE_ESP_MAXIMUM_RETRY  10
+#define EXAMPLE_ESP_MAXIMUM_RETRY  100
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -57,22 +40,22 @@ static EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 static int s_retry_num = 0;
 
-static const char *TAG = "wifi softAP and station";
-static httpd_handle_t server = NULL;
+static const char *TAG = "LOCATOR";
 
-char g_ipaddress[32] = { 0 };
+uint8_t ssid[32];
+uint8_t pass[64];
 int g_Mode = 1;  //0 learning; 1 scanning
 char c_host[64] = { 0 };
 char c_family[64] = { 0 };
 char c_location[64] = { 0 };
-char c_device[32] = { 0 };
+char c_device[128] = { 0 };  //location+ip
+
 int i_duration = 20; //seconds for bluetooth scan
 int i_interval = 40; //in msecs /0.625 = 64= 0x40
 int i_window = 30; //in msecs /0.625 = 48 = 0x30
 cJSON *bluetooth_json = NULL;
 cJSON *battery_json = NULL;
 cJSON *asset_json = NULL;
-bool g_running = false;
 
 /* declare static functions */
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param);
@@ -114,12 +97,12 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
             break;
         case HTTP_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
-            int mbedtls_err = 0;
-            esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
-            if (err != 0) {
-                ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
-                ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
-            }
+            // int mbedtls_err = 0;
+            // esp_err_t err = esp_tls_get_and_clear_last_error(evt->data, &mbedtls_err, NULL);
+            // if (err != 0) {
+            //     ESP_LOGI(TAG, "Last esp error code: 0x%x", err);
+            //     ESP_LOGI(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
+            // }
             break;
     }
     return ESP_OK;
@@ -129,10 +112,6 @@ static esp_http_client_config_t client_config = {
     };
 static void http_rest_post_data(esp_http_client_config_t *aconfig, const char *post_data)
 {    
-    if (g_running == false || c_host[0] == 0) {
-        ESP_LOGD(TAG, "Not running or NO Host configured");
-        return;
-    }
     esp_http_client_handle_t client = esp_http_client_init(aconfig);
     esp_err_t err;
 
@@ -296,13 +275,8 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
                     sleep(2);
                     post_battery();
                     
-                    if (g_running) {
-                        sleep(8);
-                        esp_ble_gap_start_scanning(i_duration);
-                    }
-                    else {
-                        ESP_LOGI(TAG,"Stop scan");
-                    }
+                    sleep(8);
+                    esp_ble_gap_start_scanning(i_duration);
                 }
                 default:
                     break;
@@ -323,266 +297,34 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
     }
 }
 
-
-static esp_err_t system_info_get_handler(httpd_req_t *req)
+static void bluetooth_init() 
 {
-    httpd_resp_set_type(req, "application/json");
-    cJSON *root = cJSON_CreateObject();
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    esp_bt_controller_init(&bt_cfg);
+    esp_bt_controller_enable(ESP_BT_MODE_BLE);
 
-    cJSON_AddStringToObject(root, "mac", c_device);
-    cJSON_AddStringToObject(root, "ip", g_ipaddress);
-    if (g_Mode) {
-        cJSON_AddStringToObject(root, "mode", "tracking");
-    } else
-    {
-        cJSON_AddStringToObject(root, "mode", "learning");
+    esp_bluedroid_init();
+    esp_bluedroid_enable();
+    esp_err_t status;
+    /*<! register the scan callback function to the gap module */
+    if((status = esp_ble_gap_register_callback(esp_gap_cb)) != ESP_OK) {
+        ESP_LOGE(TAG,"gap register error: %s", esp_err_to_name(status));
+        return;
     }
-    if (g_running) {
-        cJSON_AddStringToObject(root, "scanning", "true");
-    } else
-    {
-        cJSON_AddStringToObject(root, "scanning", "false");
-    }
-    
 
-    const char *sys_info = cJSON_Print(root);
-    httpd_resp_sendstr(req, sys_info);
-    free((void *)sys_info);
-    cJSON_Delete(root);
-    return ESP_OK;
-}
-static esp_err_t system_reboot_handler(httpd_req_t *req)
-{
-    esp_restart();
-}
-
-static esp_err_t set_mode_handler(httpd_req_t *req)
-{
-    int total_len = req->content_len;
-    int cur_len = 0;
-    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
-    int received = 0;
-    if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
-        return ESP_FAIL;
-    }
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post mode value");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
-
-    cJSON *root = cJSON_Parse(buf);
-    g_Mode = cJSON_GetObjectItem(root, "mode")->valueint;
-    ESP_LOGI(TAG, "mode is %d", g_Mode);
-    sprintf(c_host, "%s", cJSON_GetObjectItem(root, "host")->valuestring);
-    sprintf(c_family, "%s", cJSON_GetObjectItem(root, "family")->valuestring);
-    sprintf(c_location, "%s", cJSON_GetObjectItem(root, "location")->valuestring);
-    
-    cJSON_Delete(root);
-    httpd_resp_sendstr(req, "Post mode value successfully");
-    return ESP_OK;
-}
-
-static esp_err_t set_bluetooth_handler(httpd_req_t *req)
-{
-    int total_len = req->content_len;
-    int cur_len = 0;
-    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
-    int received = 0;
-    if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
-        return ESP_FAIL;
-    }
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post bluetooth value");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
-
-    cJSON *root = cJSON_Parse(buf);
-    i_duration = cJSON_GetObjectItem(root, "duration")->valueint;
-    i_interval = cJSON_GetObjectItem(root, "interval")->valueint;
-    i_window = cJSON_GetObjectItem(root, "window")->valueint;
-    ESP_LOGI(TAG, "Light control: duration = %d, interval = %d, window = %d", i_duration, i_interval, i_window);
-    cJSON_Delete(root);
-    httpd_resp_sendstr(req, "Post bluetooth value successfully");
-    return ESP_OK;
-}
-static esp_err_t set_wifi_handler(httpd_req_t *req)
-{
-    int total_len = req->content_len;
-    int cur_len = 0;
-    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
-    int received = 0;
-    if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
-        return ESP_FAIL;
-    }
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post wifi value");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
-
-    cJSON *root = cJSON_Parse(buf);
-    wifi_config_t wifi_config_sta;
-    sprintf((char*)wifi_config_sta.sta.ssid, "%s", cJSON_GetObjectItem(root, "ap")->valuestring);
-    sprintf((char*)wifi_config_sta.sta.password, "%s", cJSON_GetObjectItem(root, "password")->valuestring);
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
-    esp_wifi_connect();
-    cJSON_Delete(root);
-    httpd_resp_sendstr(req, "Post wifi value successfully");
-    return ESP_OK;
-}
-void set_bluetooth_parameter()
-{
     /*<! set scan parameters */
     ble_scan_params.scan_interval = i_interval / 0.625;
     ble_scan_params.scan_window = i_window / 0.625;
     esp_ble_gap_set_scan_params(&ble_scan_params);
-    
-}
-static esp_err_t user_start_stop_handler(httpd_req_t *req)
-{
-    int total_len = req->content_len;
-    int cur_len = 0;
-    char *buf = ((rest_server_context_t *)(req->user_ctx))->scratch;
-    int received = 0;
-    if (total_len >= SCRATCH_BUFSIZE) {
-        /* Respond with 500 Internal Server Error */
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
-        return ESP_FAIL;
-    }
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            /* Respond with 500 Internal Server Error */
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post wifi value");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
-
-    cJSON *root = cJSON_Parse(buf);
-    int nValue = cJSON_GetObjectItem(root, "value")->valueint;
-    if (nValue) {
-        g_running = true;
-        set_bluetooth_parameter(); // start scan in callback
-        ESP_LOGI(TAG, "running is true");
-    }
-    else {
-        g_running = false;
-        ESP_LOGI(TAG, "running is false");
-    }
-    cJSON_Delete(root);
-    httpd_resp_sendstr(req, "Post wifi value successfully");
-    return ESP_OK;
 }
 
-esp_err_t start_rest_server()
-{
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    rest_server_context_t *rest_context = calloc(1, sizeof(rest_server_context_t));
-    if (rest_context == NULL ) {
-        ESP_LOGI(TAG, "No memory for rest context");
-    };
-
-    ESP_LOGI(TAG, "Starting HTTP Server");
-    if (httpd_start(&server, &config) != ESP_OK) {
-        ESP_LOGI(TAG, "Error starting server!");
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
-
-    /* URI handler for fetching system info */
-    httpd_uri_t system_info_get_uri = {
-        .uri = "/api/info",
-        .method = HTTP_GET,
-        .handler = system_info_get_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &system_info_get_uri);
-
-    httpd_uri_t system_reboot_uri = {
-        .uri = "/api/reboot",
-        .method = HTTP_GET,
-        .handler = system_reboot_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &system_reboot_uri);
-
-    /* URI handler for setting wifi */
-    httpd_uri_t user_set_wifi_uri = {
-        .uri = "/api/wifi",
-        .method = HTTP_POST,
-        .handler = set_wifi_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &user_set_wifi_uri);
-
-    /* URI handler for setting bluetooth */
-    httpd_uri_t user_set_bluetooth_uri = {
-        .uri = "/api/bluetooth",
-        .method = HTTP_POST,
-        .handler = set_bluetooth_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &user_set_bluetooth_uri);
-
-    /* URI handler for set learn or scan */
-    httpd_uri_t user_set_mode_uri = {
-        .uri = "/api/mode",
-        .method = HTTP_POST,
-        .handler = set_mode_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &user_set_mode_uri);
-
-    /* URI handler for start learn or scan */
-    httpd_uri_t user_start_stop_uri = {
-        .uri = "/api/start",
-        .method = HTTP_POST,
-        .handler = user_start_stop_handler,
-        .user_ctx = rest_context
-    };
-    httpd_register_uri_handler(server, &user_start_stop_uri);
-
-    return ESP_OK; 
-}
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
 {
-    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
-        ESP_LOGI(TAG, "station "MACSTR" join, AID=%d",
-                 MAC2STR(event->mac), event->aid);
-    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
-        wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
-        ESP_LOGI(TAG, "station "MACSTR" leave, AID=%d",
-                 MAC2STR(event->mac), event->aid);
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
@@ -595,52 +337,37 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        sprintf(g_ipaddress, IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        sprintf(c_device, "%s-%s", c_location, ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
+        bluetooth_init();
     }
 }
 
-void wifi_init_softap(void)
-{
-    uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_efuse_read_field_blob(ESP_EFUSE_MAC_FACTORY, &mac, sizeof(mac) * 8));
-    sprintf(c_device, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
+void wifi_init_sta()
+{
     s_wifi_event_group = xEventGroupCreate();
 
     esp_netif_init();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
     esp_netif_create_default_wifi_sta();
-
+    // ESP_ERROR_CHECK(esp_event_handler_register(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, &sta_event_handler, NULL));
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
-
-    wifi_config_t wifi_config = {
-        .ap = {
-            .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .password = EXAMPLE_ESP_WIFI_PASS,
-            .max_connection = EXAMPLE_MAX_STA_CONN,
-            .authmode = WIFI_AUTH_WPA_WPA2_PSK
-        },
-    };
-    if (strlen(EXAMPLE_ESP_WIFI_PASS) == 0) {
-        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config));
-    // ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config_sta) );
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s",
-             EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
 
 
+    wifi_config_t wifi_config;
+    memcpy(wifi_config.sta.ssid, ssid, 32); 
+    memcpy(wifi_config.sta.password, pass, 64);
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
+    ESP_ERROR_CHECK(esp_wifi_start() );
+
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
+    ESP_LOGI(TAG, "connect to ap SSID:%s password:%s", ssid, pass);
 }
 
 void app_main(void)
@@ -654,23 +381,62 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    esp_bt_controller_init(&bt_cfg);
-    esp_bt_controller_enable(ESP_BT_MODE_BLE);
-
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
-    wifi_init_softap();
-
-    /* Start the server for the first time */
-    start_rest_server();
-
-    esp_bluedroid_init();
-    esp_bluedroid_enable();
-    esp_err_t status;
-    /*<! register the scan callback function to the gap module */
-    if((status = esp_ble_gap_register_callback(esp_gap_cb)) != ESP_OK) {
-        ESP_LOGE(TAG,"gap register error: %s", esp_err_to_name(status));
+    //Initialize SPIFFS
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = "/spiffs",
+      .partition_label = NULL,
+      .max_files = 5,
+      .format_if_mount_failed = true
+    };
+    // Use settings defined above to initialize and mount SPIFFS filesystem.
+    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+    ret = esp_vfs_spiffs_register(&conf);
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
         return;
+    }
+    // Open renamed file for reading
+    ESP_LOGI(TAG, "Reading file");
+    FILE* fp = fopen("/spiffs/config.txt", "r");
+    if (fp != NULL) {
+        char buf[64];
+        int count = 0;
+        while (fgets(buf,sizeof(buf),fp) != NULL) {
+            char *p = strchr(buf,'\r');
+            if (!p) p = strchr(buf,'\n');
+            if (p) *p = '\0';
+            switch(count) {
+                case 0: 
+                    memcpy(ssid, buf, 32);
+                    break;
+                case 1:
+                    memcpy(pass, buf, 64);
+                    break;
+                case 2:
+                    memcpy(c_family, buf, 64);
+                    break;
+                case 3:
+                    memcpy(c_location, buf, 64);
+                    break;
+                case 4:
+                    memcpy(c_host, buf, 64);
+                    break;
+                default:
+                    break;
+            }
+            count++;
+        }
+        fclose(fp);
+        ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+        wifi_init_sta();
+    }
+    else {
+        ESP_LOGI(TAG, "config.txt not found.");
     }
 }
