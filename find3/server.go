@@ -611,7 +611,12 @@ func handlerApiV1Battery(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "got battery by instance", "success": true, "battery": voltage})
+		mac, err := d.GetDeviceByInstance(instance)
+		if err != nil {
+				return
+		}
+		device := "bluetooth-" + mac
+		c.JSON(http.StatusOK, gin.H{"message": "got battery by instance", "success": true, "battery": voltage, "device": device})
 		return
 	}(c)
 	if err != nil {

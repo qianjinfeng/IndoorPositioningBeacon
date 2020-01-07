@@ -4,7 +4,7 @@
 Asset management through indoor positioning via bluetooth. 
 ![Schema](./schema.PNG)
  - Solution: FIND ([github.com/schollz/find](https://github.com/schollz/find))
- - Locator: ESP32 for gathering fingerprints actively or passively 
+ - Locator: ESP32 for gathering fingerprints passively 
  - Beacon: nRF52832 for emitting bluetooth signal and representing assets 
 
 # Technology
@@ -48,27 +48,7 @@ Asset management through indoor positioning via bluetooth.
 
 ESP32 development board (brough from taobao)
 ### installation
- - arduino IDE 
- - arduino-esp32 ([https://github.com/espressif/arduino-esp32](https://github.com/espressif/arduino-esp32))
-   * choose Tools -> Board: ESP32 Wrover Module  
-   * to fix flash too big issue    
-        * in arduino-1.xx/hardware/espressif/esp32/board.txt, change for esp32wrover.name=ESP32 Wrover Module  
-        ```
-            -esp32wrover.upload.maximum_size=1310720
-            +esp32wrover.upload.maximum_size=1966080
-        ```
-        * in arduino-1.xx/hardware/espressif/esp32/tools/partitions/default.csv, change  
-        ```
-            -app0,     app,  ota_0,   0x10000, 0x140000,
-            -app1,     app,  ota_1,   0x150000,0x140000,
-            -spiffs,   data, spiffs,  0x290000,0x170000,
-            +app0,     app,  ota_0,   0x10000, 0x1E0000,
-            +app1,     app,  ota_1,   0x1F0000,0x1E0000,
-            +eeprom,   data, 0x99,    0x3F0000,0x1000,
-            +spiffs,   data, spiffs,  0x3F1000,0xF000,
-        ```
- - arduino project file [sketch](/sketch_oct13b.ino)
- (flash too big issue, choose ESP32 Wrover Module )
+ - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/zh_CN/stable/search.html) 
  
 ### usage
  - Active scan: gather fingerprints for the specific location after adaptation code and burning into ESP32  
@@ -108,6 +88,11 @@ ESP32 development board (brough from taobao)
         stop learning:  
             ` http POST https://thefindserver/api/v1/settings/passive family=FAMILY device=bluetooth-60:57:18:3d:b8:14 `  
 
+- Location through Asset NO.
+    ```
+    http GET http://139.24.185.184:8005/api/v1/location_asset/ct/566710009949
+    http GET http://139.24.185.184:8005/api/v1/battery/ct/566710009943
+    ```
 
 ## Beacon
 
