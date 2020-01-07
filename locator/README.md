@@ -20,7 +20,8 @@ idf.py menuconfig
 Build the project and flash it to the board, then run monitor tool to view serial output:
 
 ```
-idf.py -p PORT flash monitor
+python2 $(which idf.py) build
+python2 $(which idf.py) -p /dev/ttyUSB0 flash monitor
 ```
 
 (To exit the serial monitor, type ``Ctrl-]``.)

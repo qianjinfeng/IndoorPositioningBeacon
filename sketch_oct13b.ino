@@ -256,7 +256,11 @@ void SubmitWiFi(void)
       if (aDevice.haveServiceData()) {
         // eddy beacon, send namespace, battery to /beacon
         if (aDevice.getServiceDataUUID().getNative()->uuid.uuid16 == 0xfeaa) {
-          bdata[(String)mac.c_str()] = aDevice.getServiceData().c_str();
+          char *pHex = BLEUtils::buildHexData(nullptr, (uint8_t*)aDevice.getServiceData().data(), aDevice.getServiceData().length());
+          std::string ret(pHex);
+          free(pHex);
+          
+          bdata[(String)mac.c_str()] = (String)ret.c_str();
           hasEddyStone = true;
         }
       }
@@ -265,6 +269,7 @@ void SubmitWiFi(void)
   pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
 
   serializeJsonPretty(jdoc, Serial);  
+  serializeJsonPretty(bdoc, Serial);  
   
   WiFiClientSecure client;
   client.setCertificate(test_client_cert); // for client verification
