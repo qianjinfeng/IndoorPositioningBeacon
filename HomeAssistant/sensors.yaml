@@ -1,0 +1,135 @@
+# One entry for each beacon you want to track
+# ICS Tower 12B
+  - platform: mqtt
+    state_topic: "battery_status/f2:91:5c:42:b4:e3"   # bluetooth address
+    name: "566710007236-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "f2:91:5c:42:b4:e3"  # bluetooth address
+    name: '566710007236'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/ee:2c:dd:e6:ca:4c"   # bluetooth address
+    name: "566710009943-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "ee:2c:dd:e6:ca:4c"  # bluetooth address
+    name: '566710009943'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/cd:06:5f:9d:9f:cd"   # bluetooth address
+    name: "566710009949-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "cd:06:5f:9d:9f:cd"  # bluetooth address
+    name: '566710009949'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/ca:d6:e9:31:ae:b8"   # bluetooth address
+    name: "566710011562-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "ca:d6:e9:31:ae:b8"  # bluetooth address
+    name: '566710011562'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/f0:34:52:77:5c:d6"   # bluetooth address
+    name: "566710007314-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "f0:34:52:77:5c:d6"  # bluetooth address
+    name: '566710007314'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/fa:74:4d:86:51:dd"   # bluetooth address
+    name: "566710007317-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "fa:74:4d:86:51:dd"  # bluetooth address
+    name: '566710007317'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/c0:11:03:47:ec:b0"   # bluetooth address
+    name: "566710007315-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "c0:11:03:47:ec:b0"  # bluetooth address
+    name: '566710007315'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/c4:9d:c3:9a:fa:8e"   # bluetooth address
+    name: "566710004059-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "c4:9d:c3:9a:fa:8e"  # bluetooth address
+    name: '566710004059'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour
+
+#
+  - platform: mqtt
+    state_topic: "battery_status/cf:9a:d7:f2:5c:ef"   # bluetooth address
+    name: "566710009940-Battery"
+    unit_of_measurement: "mV"
+    value_template: '{{ value_json.battery }}'
+    device_class: power
+
+  - platform: mqtt_room
+    device_id: "cf:9a:d7:f2:5c:ef"  # bluetooth address
+    name: '566710009940'   # Asset number
+    state_topic: 'room_presence'   # Publish to room_presence/room2  {"id":"f8:
+    timeout: 600         # 10 minutes
+    away_timeout: 3600   # 1 hour

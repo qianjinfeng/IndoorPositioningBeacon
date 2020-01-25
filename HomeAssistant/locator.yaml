@@ -1,0 +1,74 @@
+# One entry per sensor node to understand when the device is online/offline and$
+  - platform: mqtt
+    name: Cabin5
+    state_topic: "presence_nodes/Cabin5"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin5/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin7
+    state_topic: "presence_nodes/Cabin7"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin7/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin9
+    state_topic: "presence_nodes/Cabin9"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin9/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin11
+    state_topic: "presence_nodes/Cabin11"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin11/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin12
+    state_topic: "presence_nodes/Cabin12"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin12/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin20
+    state_topic: "presence_nodes/Cabin20"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin20/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: Cabin24
+    state_topic: "presence_nodes/Cabin24"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/Cabin24/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+
+
+  - platform: mqtt
+    name: B1L2Beijing
+    state_topic: "presence_nodes/B1L2Beijing"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/B1L2Beijing/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity
+
+  - platform: mqtt
+    name: B1L2Innovation
+    state_topic: "presence_nodes/B1L2Innovation"       # Publish to presence_nodes
+    json_attributes_topic: "presence_nodes/B1L2Innovation/tele"
+    payload_on: "CONNECTED"
+    payload_off: "DISCONNECTED"
+    device_class: connectivity

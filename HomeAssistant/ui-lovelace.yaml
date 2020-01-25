@@ -1,0 +1,159 @@
+title: My Awesome Home
+# Include external resources
+resources:
+  - url: /local/content-card-example.js
+    type: js
+  - url: /local/auto-entities.js
+    type: module
+  - url: /local/wired-cards.js
+    type: module
+
+views:
+    # View tab title.
+  - title: Attention
+    # Unique path for direct access /lovelace/${path}
+    path: example
+    # Each view can have a different theme applied. Theme should be defined in the frontend.
+    theme: dark-mode
+    # The cards to show on this view.
+    cards:
+      - type: custom:auto-entities
+        card:
+          type: glance
+          title: Not Found Assets
+        filter:
+          include: 
+            - domain: sensor
+              state: "not_home"
+
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: battery warning
+        filter:
+          include:
+            - domain: sensor
+              state: "< 3240"
+          exclude:
+            - state: "unknown"
+            
+        # The filter card will filter entities for their state
+      - type: entity-filter
+        entities:
+          - device_tracker.paulus
+          - device_tracker.anne_there
+        state_filter:
+          - 'home'
+        card:
+          type: glance
+          title: People that are home
+         
+  - title: FloorPlan
+    cards: 
+      - type: picture-elements
+        image: /local/FloorCabin.png
+        elements:
+          - type: state-icon
+            entity: binary_sensor.cabin5
+            style:
+              top: 10%
+              left: 10%
+          - type: state-icon
+            entity: binary_sensor.cabin7
+            style:
+              top: 30%
+              left: 10%
+          - type: state-icon
+            entity: binary_sensor.cabin9
+            style:
+              top: 45%
+              left: 10%
+          - type: state-icon
+            entity: binary_sensor.cabin12
+            style:
+              top: 60%
+              left: 50%
+          - type: state-icon
+            entity: binary_sensor.cabin20
+            style:
+              top: 30%
+              left: 90%
+          - type: state-icon
+            entity: binary_sensor.cabin24
+            style:
+              top: 60%
+              left: 90%
+
+
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: All locators
+        filter:
+          include:
+            - entity_id: "binary_sensor.cabin*"
+
+
+    # Specify a tab icon if you want the view tab to be an icon.
+  - icon: mdi:home-assistant
+    # Title of the view. Will be used as the tooltip for tab icon
+    title: Second view
+    cards:
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: All Tower Asset
+        filter:
+          include:
+            - entity_id: "sensor.5*"
+          exclude:
+            - entity_id: "sensor.*_battery"
+
+        # Entities card will take a list of entities and show their state.
+      - type: glance
+        # Title of the entities card
+        title: Example
+        # The entities here will be shown in the same order as specified.
+        # Each entry is an entity ID or a map with extra options.
+        entities:
+          - binary_sensor.cabin5
+          - binary_sensor.cabin7
+          - binary_sensor.cabin9
+          - binary_sensor.cabin12
+          - binary_sensor.cabin20
+          - binary_sensor.cabin24
+          - binary_sensor.b1l2beijing
+          - binary_sensor.b1l2innovation
+          - binary_sensor.testlocation
+          - sensor.test_asset
+          - sensor.test_battery
+          - sensor.566710004059
+          - sensor.566710004059_battery
+          - sensor.566710007236
+          - sensor.566710007236_battery
+          - sensor.566710007314
+          - sensor.566710007314_battery
+          - sensor.566710007315
+          - sensor.566710007315_battery
+          - sensor.566710007317
+          - sensor.566710007317_battery
+          - sensor.566710009940
+          - sensor.566710009940_battery
+          - sensor.566710009943
+          - sensor.566710009943_battery
+          - sensor.566710009949
+          - sensor.566710009949_battery
+          - sensor.566710009953
+          - sensor.566710009953_battery
+          - sensor.566710011427
+          - sensor.566710011427_battery
+          - sensor.566710011561
+          - sensor.566710011561_battery
+          - sensor.566710011562
+          - sensor.566710011562_battery
+
+        # The markdown card will render markdown text.
+      - type: markdown
+        title: Lovelace
+        content: >
+          Welcome to your **Lovelace UI**.
