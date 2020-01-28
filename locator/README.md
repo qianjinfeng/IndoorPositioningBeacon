@@ -21,7 +21,10 @@ idf.py menuconfig
 
 * 0x10000 size and 0x3F0000 start address of SPIFFS is defined in partitions.csv
 ```
+esp/esp-idf/components/spiffs$ python spiffsgen.py 0x10000 [dir] spiffs.bin
+or 
 mkspiffs -c [a foder with config.txt] -b 4096 -p 256 -s 0x10000 spiffs.bin
+
 python esptool.py --chip esp32 --port [port] --baud [baud] write_flash -z 0x3F0000 spiffs.bin
 ```
 ..\..\..\..\components\esptool_py\esptool\esptool.py -p COM4 -b 115200 write_flash -z 0x3F0000 build\spiffs.bin
