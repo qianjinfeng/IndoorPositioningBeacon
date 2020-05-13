@@ -1,9 +1,9 @@
-# WiFi station example
+# Locator
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+Collect eddystone signal (0x00 id, 0x20 tlm) and Route bluetooth information to Home Assistant mqtt_room
 
 
-## How to use example
+## How to use 
 
 ### Configure the project
 
@@ -13,9 +13,7 @@ idf.py menuconfig
 
 * Set serial port under Serial Flasher Options.
 
-* Set WiFi SSID and WiFi Password and Maximum retry under Example Configuration Options.
-
-* customize partitions
+* customize partitions: partitions
 
 ### Flash Spiffs
 
@@ -41,27 +39,12 @@ See the Getting Started Guide for full steps to configure and use ESP-IDF to bui
 
 ## Sample Data
 
-cabin24
-bluetooth-ee:2c:dd:e6:ca:4c 566710009943
-bluetooth-cd:06:5f:9d:9f:cd 566710009949
-cabin20
-bluetooth-f8:22:22:c5:b4:32 566710009953 
-bluetooth-c0:7d:81:15:a4:7e 566710011561
-cabin12
-bluetooth-f6:6c:34:cc:c7:34 566710011427
-cabin11
-bluetooth-ca:d6:e9:31:ae:b8 566710011562
-cabin9
-bluetooth-f0:34:52:77:5c:d6 566710007314 
-cabin7
-bluetooth-fa:74:4d:86:51:dd 566710007317
-bluetooth-c0:11:03:47:ec:b0 566710007315
-cabin5
-bluetooth-f2:91:5c:42:b4:e3 566710007236
-B1L2BeiJing
-bluetooth-c4:9d:c3:9a:fa:8e 566710004059
-B1L2InnovationRoom
-bluetooth-cf:9a:d7:f2:5c:ef 566710009940
+config.txt
+wifissid
+wifipassword
+location
+mqttip
+
 
 
 

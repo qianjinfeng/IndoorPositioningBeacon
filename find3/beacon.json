@@ -1,8 +1,0 @@
-
-{
-    "f": "test",
-    "b": {
-        "aa:bb:cc:dd": "batter",
-	"bb:cc:dd:ee": "namespace"
-    }
-}

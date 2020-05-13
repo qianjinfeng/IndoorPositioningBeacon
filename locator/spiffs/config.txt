@@ -1,0 +1,4 @@
+SWSGUEST02
+SSME_123456
+Cabin5
+mqtt://mqtt:mqtt@139.24.185.184:1883

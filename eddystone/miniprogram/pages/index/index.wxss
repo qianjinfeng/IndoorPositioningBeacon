@@ -1,0 +1,30 @@
+/**index.wxss**/
+
+page {
+  background: #f6f6f6;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.devices_summary {
+  margin-top: 30px;
+  padding: 10px;
+  font-size: 16px;
+}
+.device_list {
+  /* height: 300px; */
+  margin: 55px 5px;
+  margin-top: 0;
+  border: 1px solid #EEE;
+  border-radius: 5px;
+  width: auto;
+}
+.device_item {
+  border-bottom: 1px solid #EEE;
+  padding: 10px;
+  color: #666;
+}
+.device_item_hover {
+  background-color: rgba(0, 0, 0, .1);
+}
+
